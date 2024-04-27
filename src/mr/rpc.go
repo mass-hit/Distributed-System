@@ -8,43 +8,26 @@ package mr
 
 import (
 	"os"
-	"time"
 )
 import "strconv"
 
-//
-// example to show how to declare the arguments
-// and reply for an RPC.
-//
-type TaskType int
-
-const (
-	Map TaskType = iota
-	Reduce
-	Wait
-)
-
-type ExampleArgs struct {
-	X int
-}
-
-type ExampleReply struct {
-	Y        int
-	taskType TaskType
-}
-
-type Task struct {
-	fileName  string
-	id        int
-	startTime time.Time
-	status    TaskStatus
+type HeartbeatRequest struct {
 }
 
 type HeartbeatResponse struct {
+	FileName string
+	TaskType TaskType
+	Id       int
+	NReduce  int
+	NMap     int
 }
 
 type ReportRequest struct {
+	Id    int
+	Phase SchedulePhase
 }
+
+type ReportResponse struct{}
 
 // Add your RPC definitions here.
 
