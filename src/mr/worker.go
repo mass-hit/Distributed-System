@@ -14,9 +14,6 @@ import "log"
 import "net/rpc"
 import "hash/fnv"
 
-//
-// Map functions return a slice of KeyValue.
-//
 type KeyValue struct {
 	Key   string
 	Value string
@@ -25,7 +22,7 @@ type KeyValue struct {
 func WriteFile(filename string, r io.Reader) (err error) {
 	f, err := ioutil.TempFile(".", filename)
 	if err != nil {
-		return fmt.Errorf("cannot create temporary file: %v", err)
+		return fmt.Errorf("cannot create temp file: %v", err)
 	}
 	defer func() {
 		if err != nil {
@@ -35,44 +32,34 @@ func WriteFile(filename string, r io.Reader) (err error) {
 	defer f.Close()
 	name := f.Name()
 	if _, err := io.Copy(f, r); err != nil {
-		return fmt.Errorf("cannot write temporary file: %v", err)
+		return fmt.Errorf("cannot write data to tempfile %q: %v", name, err)
 	}
 	if err := f.Close(); err != nil {
-		return fmt.Errorf("close error: %v", err)
+		return fmt.Errorf("can't close tempfile %q: %v", name, err)
 	}
-	_, err = os.Stat(filename)
+	info, err := os.Stat(filename)
 	if os.IsNotExist(err) {
-		return fmt.Errorf("%s does not exist", filename)
 	} else if err != nil {
-		return fmt.Errorf("stat error: %v", err)
+		return err
 	} else {
-		if err := os.Chmod(name, os.FileMode(0644)); err != nil {
-			return fmt.Errorf("chmod error: %v", err)
+		if err := os.Chmod(name, info.Mode()); err != nil {
+			return fmt.Errorf("can't set filemode on tempfile %q: %v", name, err)
 		}
 	}
 	if err := os.Rename(name, filename); err != nil {
-		return fmt.Errorf("rename error: %v", err)
+		return fmt.Errorf("cannot replace %q with tempfile %q: %v", filename, name, err)
 	}
 	return nil
 }
 
-//
-// use ihash(key) % NReduce to choose the reduce
-// task number for each KeyValue emitted by Map.
-//
 func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-//
-// main/mrworker.go calls this function.
-//
-
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-	// Your worker implementation here.
 	for {
 		response := doHeartbeat()
 		switch response.TaskType {
@@ -116,7 +103,7 @@ func doMapTask(mapf func(string, string) []KeyValue, response *HeartbeatResponse
 			var buf bytes.Buffer
 			enc := json.NewEncoder(&buf)
 			for _, kv := range intermediate {
-				err = enc.Encode(kv)
+				err := enc.Encode(kv)
 				if err != nil {
 					log.Fatalf("encode error: %v", err)
 				}
@@ -171,7 +158,6 @@ func doHeartbeat() *HeartbeatResponse {
 }
 
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := coordinatorSock()
 	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
