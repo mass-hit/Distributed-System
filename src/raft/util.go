@@ -39,8 +39,24 @@ type AppendEntriesRequest struct {
 }
 
 type AppendEntriesResponse struct {
-	Term    int
-	Success bool
+	Term          int
+	Success       bool
+	ConflictIndex int
+	ConflictTerm  int
+}
+
+type InstallSnapshotRequest struct {
+	Term         int
+	LeaderId     int
+	LastLogIndex int
+	LastLogTerm  int
+	offset       int
+	Data         []byte
+	done         bool
+}
+
+type InstallSnapshotResponse struct {
+	Term int
 }
 
 type Entry struct {
