@@ -18,6 +18,8 @@ package raft
 //
 
 import (
+	"6.824/labgob"
+	"bytes"
 	"sort"
 	//	"bytes"
 	"sync"
@@ -85,6 +87,15 @@ func (rf *Raft) GetState() (int, bool) {
 	return rf.currentTerm, rf.state == Leader
 }
 
+func (rf *Raft) endcodeState() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.logs)
+	return w.Bytes()
+}
+
 //
 // save Raft's persistent state to stable storage,
 // where it can later be retrieved after a crash and restart.
@@ -92,13 +103,7 @@ func (rf *Raft) GetState() (int, bool) {
 //
 func (rf *Raft) persist() {
 	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	rf.persister.SaveRaftState(rf.endcodeState())
 }
 
 //
@@ -109,18 +114,16 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	}
 	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var currentTerm, votedFor int
+	var logs []Entry
+	if d.Decode(&currentTerm) != nil ||
+		d.Decode(&votedFor) != nil ||
+		d.Decode(&logs) != nil {
+	}
+	rf.currentTerm, rf.votedFor, rf.logs = currentTerm, votedFor, logs
+	rf.lastApplied, rf.commitIndex = rf.logs[0].Index, rf.logs[0].Index
 }
 
 //
@@ -146,6 +149,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 func (rf *Raft) AppendEntries(request *AppendEntriesRequest, response *AppendEntriesResponse) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	defer rf.persist()
 	if request.Term < rf.currentTerm {
 		response.Term, response.Success = rf.currentTerm, false
 		return
@@ -294,6 +298,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	newLog := Entry{rf.logs[len(rf.logs)-1].Index + 1, rf.currentTerm, command}
 	rf.logs = append(rf.logs, newLog)
 	rf.matchIndex[rf.me], rf.nextIndex[rf.me] = newLog.Index, newLog.Index+1
+	rf.persist()
 	return newLog.Index, newLog.Term, isLeader
 }
 
@@ -364,6 +369,7 @@ func (rf *Raft) HeartBeat() {
 						if response.Term > rf.currentTerm {
 							rf.ChangeState(Follower)
 							rf.currentTerm, rf.votedFor = response.Term, -1
+							rf.persist()
 						} else if response.Term == rf.currentTerm {
 							rf.nextIndex[peer] = response.ConflictIndex
 							if response.ConflictTerm != -1 {
@@ -394,6 +400,7 @@ func (rf *Raft) StartElection() {
 	}
 	grantedVotes := 1
 	rf.votedFor = rf.me
+	rf.persist()
 	for peer := range rf.peers {
 		if peer == rf.me {
 			continue
@@ -414,6 +421,7 @@ func (rf *Raft) StartElection() {
 				} else if reply.Term > rf.currentTerm {
 					rf.ChangeState(Follower)
 					rf.currentTerm, rf.votedFor = reply.Term, -1
+					rf.persist()
 				}
 			}
 		}(peer)
