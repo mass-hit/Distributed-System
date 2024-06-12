@@ -50,9 +50,7 @@ type InstallSnapshotRequest struct {
 	LeaderId     int
 	LastLogIndex int
 	LastLogTerm  int
-	offset       int
 	Data         []byte
-	done         bool
 }
 
 type InstallSnapshotResponse struct {

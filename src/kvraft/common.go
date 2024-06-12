@@ -1,33 +1,44 @@
 package kvraft
 
+import "time"
+
+type Err uint8
+
+const ExecuteTimeout = 500 * time.Millisecond
+
 const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongLeader = "ErrWrongLeader"
+	OK Err = iota
+	ErrNoKey
+	ErrWrongLeader
+	ErrTimeOut
 )
 
-type Err string
-
-// Put or Append
-type PutAppendArgs struct {
-	Key   string
-	Value string
-	Op    string // "Put" or "Append"
-	// You'll have to add definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+type LastOp struct {
+	MaxAppliedId int64
+	LastResponse *OpResponse
 }
 
-type PutAppendReply struct {
-	Err Err
+type Command struct {
+	*OpRequest
 }
 
-type GetArgs struct {
-	Key string
-	// You'll have to add definitions here.
+type OpType uint8
+
+const (
+	OpGet OpType = iota
+	OpPut
+	OpAppend
+)
+
+type OpRequest struct {
+	Type      OpType
+	Key       string
+	Value     string
+	ClientId  int64
+	CommandId int64
 }
 
-type GetReply struct {
+type OpResponse struct {
 	Err   Err
 	Value string
 }
