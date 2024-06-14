@@ -47,7 +47,7 @@ func (kv *KVServer) getNotifyChan(index int) chan *OpResponse {
 }
 
 func (kv *KVServer) Get(args *OpRequest, reply *OpResponse) {
-	index, _, isLeader := kv.rf.Start(Command{args})
+	index, _, isLeader := kv.rf.Start(*args)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
@@ -77,25 +77,7 @@ func (kv *KVServer) PutAppend(args *OpRequest, reply *OpResponse) {
 		return
 	}
 	kv.mu.RUnlock()
-	index, _, isLeader := kv.rf.Start(Command{args})
-	if !isLeader {
-		reply.Err = ErrWrongLeader
-		return
-	}
-	kv.mu.Lock()
-	ch := kv.getNotifyChan(index)
-	kv.mu.Unlock()
-	select {
-	case result := <-ch:
-		reply.Value, reply.Err = result.Value, result.Err
-	case <-time.After(ExecuteTimeout):
-		reply.Err = ErrTimeOut
-	}
-	go func() {
-		kv.mu.Lock()
-		delete(kv.notifyChan, index)
-		defer kv.mu.Unlock()
-	}()
+	kv.Get(args, reply)
 }
 
 //
@@ -129,7 +111,7 @@ func (kv *KVServer) applier() {
 		}
 		kv.lastApplied = message.CommandIndex
 		reply := new(OpResponse)
-		args := message.Command.(Command)
+		args := message.Command.(OpRequest)
 		if args.Type != OpGet && kv.checkOutDateRequest(args.ClientId, args.CommandId) {
 			reply = kv.lastOperations[args.ClientId].LastResponse
 		} else {
@@ -176,7 +158,7 @@ func (kv *KVServer) applier() {
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
-	labgob.Register(Command{})
+	labgob.Register(OpRequest{})
 	kv := new(KVServer)
 	kv.maxraftstate = maxraftstate
 	kv.lastApplied = 0

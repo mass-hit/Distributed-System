@@ -18,10 +18,6 @@ type LastOp struct {
 	LastResponse *OpResponse
 }
 
-type Command struct {
-	*OpRequest
-}
-
 type OpType uint8
 
 const (
