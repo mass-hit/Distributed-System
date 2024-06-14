@@ -4,6 +4,7 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
+	"bytes"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,19 @@ type KVServer struct {
 	memoryKV       map[string]string
 	notifyChan     map[int]chan *OpResponse
 	lastOperations map[int64]LastOp
+}
+
+func (kv *KVServer) readPersist(data []byte) {
+	if data == nil || len(data) < 1 {
+		return
+	}
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var memoryKV map[string]string
+	var lastOperation map[int64]LastOp
+	d.Decode(&memoryKV)
+	d.Decode(&lastOperation)
+	kv.memoryKV, kv.lastOperations = memoryKV, lastOperation
 }
 
 func (kv *KVServer) checkOutDateRequest(clientId int64, commandId int64) bool {
@@ -104,40 +118,56 @@ func (kv *KVServer) killed() bool {
 func (kv *KVServer) applier() {
 	for !kv.killed() {
 		message := <-kv.applyCh
-		kv.mu.Lock()
-		if message.CommandIndex <= kv.lastApplied {
-			kv.mu.Unlock()
-			continue
-		}
-		kv.lastApplied = message.CommandIndex
-		reply := new(OpResponse)
-		args := message.Command.(OpRequest)
-		if args.Type != OpGet && kv.checkOutDateRequest(args.ClientId, args.CommandId) {
-			reply = kv.lastOperations[args.ClientId].LastResponse
-		} else {
-			switch args.Type {
-			case OpGet:
-				if value, ok := kv.memoryKV[args.Key]; ok {
-					reply.Value, reply.Err = value, OK
-				} else {
-					reply.Value, reply.Err = "", ErrNoKey
+		if message.CommandValid {
+			kv.mu.Lock()
+			if message.CommandIndex <= kv.lastApplied {
+				kv.mu.Unlock()
+				continue
+			}
+			kv.lastApplied = message.CommandIndex
+			reply := new(OpResponse)
+			args := message.Command.(OpRequest)
+			if args.Type != OpGet && kv.checkOutDateRequest(args.ClientId, args.CommandId) {
+				reply = kv.lastOperations[args.ClientId].LastResponse
+			} else {
+				switch args.Type {
+				case OpGet:
+					if value, ok := kv.memoryKV[args.Key]; ok {
+						reply.Value, reply.Err = value, OK
+					} else {
+						reply.Value, reply.Err = "", ErrNoKey
+					}
+				case OpPut:
+					kv.memoryKV[args.Key] = args.Value
+					reply.Value, reply.Err = "", OK
+				case OpAppend:
+					kv.memoryKV[args.Key] += args.Value
+					reply.Value, reply.Err = "", OK
 				}
-			case OpPut:
-				kv.memoryKV[args.Key] = args.Value
-				reply.Value, reply.Err = "", OK
-			case OpAppend:
-				kv.memoryKV[args.Key] += args.Value
-				reply.Value, reply.Err = "", OK
+				if args.Type != OpGet {
+					kv.lastOperations[args.ClientId] = LastOp{args.CommandId, reply}
+				}
 			}
-			if args.Type != OpGet {
-				kv.lastOperations[args.ClientId] = LastOp{args.CommandId, reply}
+			if currentTerm, isLeader := kv.rf.GetState(); isLeader && message.CommandTerm == currentTerm {
+				ch := kv.getNotifyChan(message.CommandIndex)
+				ch <- reply
 			}
+			if kv.maxraftstate != -1 && kv.rf.GetRaftStateSize() >= kv.maxraftstate {
+				w := new(bytes.Buffer)
+				e := labgob.NewEncoder(w)
+				e.Encode(kv.memoryKV)
+				e.Encode(kv.lastOperations)
+				kv.rf.Snapshot(message.CommandIndex, w.Bytes())
+			}
+			kv.mu.Unlock()
+		} else if message.SnapshotValid {
+			kv.mu.Lock()
+			if kv.rf.CondInstallSnapshot(message.SnapshotTerm, message.SnapshotIndex, message.Snapshot) {
+				kv.readPersist(message.Snapshot)
+				kv.lastApplied = message.SnapshotIndex
+			}
+			kv.mu.Unlock()
 		}
-		if currentTerm, isLeader := kv.rf.GetState(); isLeader && message.CommandTerm == currentTerm {
-			ch := kv.getNotifyChan(message.CommandIndex)
-			ch <- reply
-		}
-		kv.mu.Unlock()
 	}
 }
 
@@ -168,6 +198,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.memoryKV = make(map[string]string)
 	kv.notifyChan = make(map[int]chan *OpResponse)
 	kv.lastOperations = make(map[int64]LastOp)
+	kv.readPersist(persister.ReadSnapshot())
 	go kv.applier()
 	return kv
 }

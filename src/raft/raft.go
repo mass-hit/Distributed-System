@@ -88,6 +88,12 @@ func (rf *Raft) GetState() (int, bool) {
 	return rf.currentTerm, rf.state == Leader
 }
 
+func (rf *Raft) GetRaftStateSize() int {
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
+	return rf.persister.RaftStateSize()
+}
+
 func (rf *Raft) endcodeState() []byte {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
