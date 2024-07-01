@@ -31,7 +31,7 @@ type KVServer struct {
 
 	// Your definitions here.
 	memoryKV       map[string]string
-	notifyChan     map[int]chan *OpResponse
+	notifyChans    map[int]chan *OpResponse
 	lastOperations map[int64]LastOp
 }
 
@@ -54,10 +54,10 @@ func (kv *KVServer) checkOutDateRequest(clientId int64, commandId int64) bool {
 }
 
 func (kv *KVServer) getNotifyChan(index int) chan *OpResponse {
-	if _, ok := kv.notifyChan[index]; !ok {
-		kv.notifyChan[index] = make(chan *OpResponse, 1)
+	if _, ok := kv.notifyChans[index]; !ok {
+		kv.notifyChans[index] = make(chan *OpResponse, 1)
 	}
-	return kv.notifyChan[index]
+	return kv.notifyChans[index]
 }
 
 func (kv *KVServer) Get(args *OpRequest, reply *OpResponse) {
@@ -77,7 +77,7 @@ func (kv *KVServer) Get(args *OpRequest, reply *OpResponse) {
 	}
 	go func() {
 		kv.mu.Lock()
-		delete(kv.notifyChan, index)
+		delete(kv.notifyChans, index)
 		defer kv.mu.Unlock()
 	}()
 }
@@ -196,7 +196,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.memoryKV = make(map[string]string)
-	kv.notifyChan = make(map[int]chan *OpResponse)
+	kv.notifyChans = make(map[int]chan *OpResponse)
 	kv.lastOperations = make(map[int64]LastOp)
 	kv.readPersist(persister.ReadSnapshot())
 	go kv.applier()

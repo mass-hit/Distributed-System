@@ -15,16 +15,16 @@ type ShardCtrler struct {
 	applyCh chan raft.ApplyMsg
 
 	lastOperations map[int64]LastOp
-	notifyChan     map[int]chan *OpResponse
+	notifyChans    map[int]chan *OpResponse
 
 	configs []Config // indexed by config num
 }
 
 func (sc *ShardCtrler) getNotifyChan(index int) chan *OpResponse {
-	if _, ok := sc.notifyChan[index]; !ok {
-		sc.notifyChan[index] = make(chan *OpResponse, 1)
+	if _, ok := sc.notifyChans[index]; !ok {
+		sc.notifyChans[index] = make(chan *OpResponse, 1)
 	}
-	return sc.notifyChan[index]
+	return sc.notifyChans[index]
 }
 
 func (sc *ShardCtrler) checkOutDateRequest(clientId int64, commandId int64) bool {
@@ -85,7 +85,7 @@ func (sc *ShardCtrler) Query(args *OpRequest, reply *OpResponse) {
 	}
 	go func() {
 		sc.mu.Lock()
-		delete(sc.notifyChan, index)
+		delete(sc.notifyChans, index)
 		defer sc.mu.Unlock()
 	}()
 }
@@ -255,7 +255,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	labgob.Register(OpRequest{})
 	sc.applyCh = make(chan raft.ApplyMsg)
 	sc.rf = raft.Make(servers, me, persister, sc.applyCh)
-	sc.notifyChan = make(map[int]chan *OpResponse)
+	sc.notifyChans = make(map[int]chan *OpResponse)
 	sc.lastOperations = make(map[int64]LastOp)
 	go sc.applier()
 	return sc
