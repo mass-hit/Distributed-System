@@ -41,7 +41,7 @@ func (kv *ShardKV) checkOutDateRequest(clientId int64, commandId int64) bool {
 }
 
 func (kv *ShardKV) canServe(shardId int) bool {
-	return kv.currentConfig.Shards[shardId] == kv.gid && kv.shards[shardId].Status == Serving
+	return kv.currentConfig.Shards[shardId] == kv.gid && (kv.shards[shardId].Status == Serving || kv.shards[shardId].Status == GCing)
 }
 
 func (kv *ShardKV) getNotifyChan(index int) chan *OpResponse {
@@ -131,6 +131,22 @@ func (kv *ShardKV) GetShards(args *ShardRequest, reply *ShardResponse) {
 		reply.LastOperations[clientId] = LastOp{operation.MaxAppliedId, &OpResponse{operation.LastResponse.Err, operation.LastResponse.Value}}
 	}
 	reply.ConfigNum, reply.Err = args.ConfigNum, OK
+}
+
+func (kv *ShardKV) DeleteShards(args *ShardRequest, reply *ShardResponse) {
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	kv.mu.RLock()
+	if kv.currentConfig.Num > args.ConfigNum {
+		reply.Err = OK
+		kv.mu.RUnlock()
+		return
+	}
+	kv.mu.RUnlock()
+	kv.rf.Start(Command{DeleteShards, *args})
+	reply.Err = OK
 }
 
 //
@@ -239,12 +255,24 @@ func (kv *ShardKV) applier() {
 							for key, value := range shard {
 								kv.shards[shardId].KV[key] = value
 							}
-							kv.shards[shardId].Status = Serving
+							kv.shards[shardId].Status = GCing
 						}
 					}
 					for clientId, operation := range shardsInfo.LastOperations {
 						if lastOp, ok := kv.lastOperations[clientId]; !ok || lastOp.MaxAppliedId < operation.MaxAppliedId {
 							kv.lastOperations[clientId] = operation
+						}
+					}
+				}
+			case DeleteShards:
+				shardsInfo := args.Data.(ShardRequest)
+				if shardsInfo.ConfigNum == kv.currentConfig.Num {
+					for _, shardId := range shardsInfo.ShardIds {
+						shard := kv.shards[shardId]
+						if shard.Status == GCing {
+							shard.Status = Serving
+						} else if shard.Status == BePulling {
+							kv.shards[shardId] = &Shard{make(map[string]string), Serving}
 						}
 					}
 				}
@@ -276,7 +304,7 @@ func (kv *ShardKV) ticker() {
 			kv.mu.RLock()
 			flag := true
 			for _, shard := range kv.shards {
-				if shard.Status == Pulling {
+				if shard.Status != Serving {
 					flag = false
 					break
 				}
@@ -317,6 +345,32 @@ func (kv *ShardKV) monitor() {
 			wg.Wait()
 		}
 		time.Sleep(ShardsTimeOut)
+	}
+}
+
+func (kv *ShardKV) gc() {
+	for {
+		if _, isLeader := kv.rf.GetState(); isLeader {
+			kv.mu.RLock()
+			gidShardIdsMap := kv.getShardIdsByStatus(GCing)
+			var wg sync.WaitGroup
+			for gid, shardIds := range gidShardIdsMap {
+				wg.Add(1)
+				go func(servers []string, configNum int, shardIds []int) {
+					defer wg.Done()
+					args := &ShardRequest{configNum, shardIds}
+					for _, server := range servers {
+						reply := new(ShardResponse)
+						if kv.make_end(server).Call("ShardKV.DeleteShards", args, reply) && reply.Err == OK {
+							kv.rf.Start(Command{DeleteShards, *args})
+						}
+					}
+				}(kv.lastConfig.Groups[gid], kv.currentConfig.Num, shardIds)
+			}
+			kv.mu.RUnlock()
+			wg.Wait()
+		}
+		time.Sleep(GCTimeOut)
 	}
 }
 
@@ -378,5 +432,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	go kv.applier()
 	go kv.ticker()
 	go kv.monitor()
+	go kv.gc()
 	return kv
 }

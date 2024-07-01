@@ -15,6 +15,7 @@ const (
 	ExecuteTimeout = 500 * time.Millisecond
 	ConfigTimeout  = 100 * time.Millisecond
 	ShardsTimeOut  = 50 * time.Millisecond
+	GCTimeOut      = 50 * time.Millisecond
 )
 
 type Err uint8
@@ -35,6 +36,7 @@ const (
 	Serving ShardStatus = iota
 	Pulling
 	BePulling
+	GCing
 )
 
 type Shard struct {
@@ -61,6 +63,7 @@ const (
 	Operation CommandType = iota
 	Configuration
 	GetShards
+	DeleteShards
 )
 
 type Command struct {
